@@ -1,18 +1,34 @@
-from dataclasses import dataclass
-
+# import csv
+import re
 import requests
 from bs4 import BeautifulSoup
 
 
 RANDOM_LYRICS_URL = r'http://www.stixoi.info/stixoi.php?info=Lyrics&act=random'
-LYRICS_FILENAME = 'lyrics.txt'
+LYRICS_FILENAME = 'lyrics.csv'
+MAX_SONGS = 10000
+SEP = '\t'
 
-SLEEP_TIME = 30
 
+def clean_title(title):
+    """
+        Cleans the input `title` based on some rules
 
-@dataclass
-class Site:
-    url: str
+    :param title: Input title to clean
+    :type title: str
+    :return:
+    """
+    # remove all trailing and leading whitespace
+    title = title.strip()
+    # get rid of newlines
+    title = title.replace('\r\n', ' ')
+    # get rid of newlines and trailing spaces
+    title = title.replace('\n', ' ')
+
+    # get rid of multiple spaces
+    title = re.sub(' +', ' ', title)
+
+    return title
 
 
 def clean_lyrics(lyrics):
@@ -23,28 +39,30 @@ def clean_lyrics(lyrics):
     :type lyrics: str
     :return:
     """
-    # split / remove all whitespace
+    # remove all trailing and leading whitespace
     lyrics = lyrics.strip()
+    # get rid of \r
     lyrics = lyrics.replace('\r\n', '\n')
-    lyrics = lyrics.replace('\n\n', '\n')
-    lyrics_list = lyrics.split('\n')
-    # strip empty space
-    lyrics_list = [s.strip() for s in lyrics_list if s]
-    # join by tab
-    lyrics = '\t'.join(lyrics_list)
+    # get rid of multiple newlines and trailing spaces
+    lyrics = re.sub(r'(\s)*\n(\s)*', '\n', lyrics)
+
+    # get rid of multiple spaces
+    lyrics = re.sub(' +', ' ', lyrics)
+
     return lyrics
 
 
-def yield_n_random_lyrics(n):
+def get_n_random_lyrics(n):
     """
-        Gets a list of lyrics for n random songs
+        Gets a dictionary of `{title: lyrics}` for n random songs
     :param n:
     :type n: int
-    :return: lyrics_list
+    :return: songs_dict
     """
 
-    assert isinstance(n, int)
-    assert n > 0
+    if (not isinstance(n, int)) or (n <= 0) or (n > MAX_SONGS):
+        raise ValueError(f'n must be a positive integer 1 - {MAX_SONGS}')
+    songs_dict = {}
 
     for _ in range(n):
         html_text = requests.get(RANDOM_LYRICS_URL).text
@@ -52,12 +70,20 @@ def yield_n_random_lyrics(n):
         if html_text:
             soup = BeautifulSoup(html_text, features='html.parser')
             divs = soup.find_all('div', class_='lyrics')
-            assert divs
             lyr = divs[0].text
-            assert lyr
+            if not lyr:
+                print('Lyrics missing, continue with next song')
             lyr = clean_lyrics(lyr)
 
-            yield lyr
+            title_divs = soup.find_all('td', class_='poemtitle0')
+            title = title_divs[0].text
+            if not title:
+                print('Lyrics missing, continue with next song')
+            title = clean_title(title)
+
+            songs_dict[title] = lyr
+
+    return songs_dict
 
 
 def write_n_random_lyrics_to_file(n, filename=LYRICS_FILENAME,
@@ -76,20 +102,28 @@ def write_n_random_lyrics_to_file(n, filename=LYRICS_FILENAME,
         raise NotImplementedError(
             'Compression not enabled yet')
 
-    if not append:
-        mode = 'w'
+    if append:
+        mode = 'a'
     else:
-        mode = 'a'
+        mode = 'w'
 
-    for lyr in yield_n_random_lyrics(n):
+    lyrics_dict = get_n_random_lyrics(n)
+
+    try:
         with open(filename, mode, encoding='utf-8') as f:
-            f.writelines(lyr + '\n')
 
-        # continue appending
-        mode = 'a'
+            # Write title
+            line = f'title{SEP}lyrics\n'
+            f.write(line)
+
+            # Write contents
+            for title, lyrics in lyrics_dict.items():
+                line = f'{title}{SEP}{lyrics}\n'
+                f.write(line)
+
+    except IOError:
+        print('I/O error')
 
 
 if __name__ == '__main__':
-    num_lyrics_to_download = 5
-    write_n_random_lyrics_to_file(
-        num_lyrics_to_download, append=True)
+    write_n_random_lyrics_to_file(n=100, append=False)
